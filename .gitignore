@@ -115,3 +115,14 @@ ui/web/nginx.staging.conf
 **/debug-*.log
 /*.sql
 scripts/docker-patch-*.sql
+
+# ── Y&P fork: local build artifacts ──────────────────────────────────────────
+# The go:embed target for the dashboard. `ui/web/dist/` (the pnpm build output)
+# is already ignored above; this is the COPY of it that the build recipe drops
+# here for `go build -tags "embedui sqlite"`. Generated, never source.
+internal/webui/dist/
+# Editor/build leftovers of the binary (/goclaw.exe itself is ignored above).
+*.exe~
+# The UI is pnpm-only (pnpm-lock.yaml is the lockfile) — a stray bun.lock from
+# an accidental `bun install` must never be committed as a second lockfile.
+ui/web/bun.lock
