@@ -202,7 +202,8 @@ func (s *SQLiteMCPServerStore) ListAccessible(ctx context.Context, agentID uuid.
 	if userID == "" || userID == "system" {
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT ms.id, ms.name, ms.display_name, ms.transport, ms.command, ms.args, ms.url, ms.headers, ms.env,
-			 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.created_by, ms.created_at, ms.updated_at,
+			 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.require_user_credentials,
+		 ms.created_by, ms.created_at, ms.updated_at,
 			 mag.tool_allow, mag.tool_deny
 			 FROM mcp_servers ms
 			 INNER JOIN mcp_agent_grants mag ON ms.id = mag.server_id AND mag.agent_id = ? AND mag.enabled = 1
@@ -219,7 +220,8 @@ func (s *SQLiteMCPServerStore) ListAccessible(ctx context.Context, agentID uuid.
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ms.id, ms.name, ms.display_name, ms.transport, ms.command, ms.args, ms.url, ms.headers, ms.env,
-		 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.created_by, ms.created_at, ms.updated_at,
+		 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.require_user_credentials,
+		 ms.created_by, ms.created_at, ms.updated_at,
 		 mag.tool_allow, mag.tool_deny
 		 FROM mcp_servers ms
 		 INNER JOIN mcp_agent_grants mag ON ms.id = mag.server_id AND mag.agent_id = ? AND mag.enabled = 1
@@ -307,16 +309,33 @@ func (s *SQLiteMCPServerStore) scanAccessibleRows(rows *sql.Rows) ([]store.MCPAc
 		var args, headers, env *[]byte
 		var toolAllowJSON, toolDenyJSON *[]byte
 
+		// settings via rawJSON, not json.RawMessage: a TEXT-storage-class row
+		// hands the driver a string, and database/sql refuses string → named
+		// []byte (json.RawMessage has no Scanner). See rawJSON in
+		// sqlx_scan_structs.go.
+		var settingsRaw rawJSON
+
 		createdAt, updatedAt := scanTimePair()
 		if err := rows.Scan(
 			&srv.ID, &srv.Name, &displayName, &srv.Transport, &command,
 			&args, &url, &headers, &env,
 			&apiKey, &toolPrefix, &srv.TimeoutSec,
-			&srv.Settings, &srv.Enabled, &srv.CreatedBy, createdAt, updatedAt,
+			&settingsRaw, &srv.Enabled, &srv.RequireUserCredentials, &srv.CreatedBy, createdAt, updatedAt,
 			&toolAllowJSON, &toolDenyJSON,
 		); err != nil {
+			// Never drop a row in silence. This scan failing makes the server
+			// invisible to EVERY per-agent / per-user MCP path (ListAccessible
+			// returns 0 rows with err == nil) while ListServers — which goes
+			// through the tolerant sqlx structs — still lists it happily. The
+			// divergence reads exactly like a missing grant.
+			// Live incident 2026-07-28 (prod, tenant yp): CacheToolDescriptions
+			// wrote settings as string(merged) → TEXT, and the bare
+			// json.RawMessage dest here rejected it. The chat agent silently
+			// lost all MCP tools; nothing anywhere logged a cause.
+			slog.Warn("mcp.scan_accessible_row_failed", "error", err)
 			continue
 		}
+		srv.Settings = json.RawMessage(settingsRaw)
 		srv.CreatedAt = createdAt.Time
 		srv.UpdatedAt = updatedAt.Time
 		srv.DisplayName = derefStr(displayName)

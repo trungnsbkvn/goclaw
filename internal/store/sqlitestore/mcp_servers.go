@@ -223,8 +223,14 @@ func (s *SQLiteMCPServerStore) CacheToolDescriptions(ctx context.Context, server
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 
+	// Bind []byte, NOT string(merged): a string lands in the column with TEXT
+	// storage class, and every raw rows.Scan of settings into a json.RawMessage
+	// (named []byte, no Scanner) then fails. Because this write happens on the
+	// first successful connect, a string here silently poisons the row for
+	// ListAccessible from that moment on — see the incident note in
+	// mcp_servers_access.go scanAccessibleRows.
 	_, err = s.db.ExecContext(ctx, `UPDATE mcp_servers SET settings = ?, updated_at = ? WHERE id = ?`,
-		string(merged), time.Now().UTC(), serverID)
+		merged, time.Now().UTC(), serverID)
 	if err != nil {
 		return fmt.Errorf("mcp_servers.cache_tool_descriptions write: %w", err)
 	}

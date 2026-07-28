@@ -164,7 +164,8 @@ func (s *PGMCPServerStore) ListAccessible(ctx context.Context, agentID uuid.UUID
 	if userID == "" || userID == "system" {
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT ms.id, ms.name, ms.display_name, ms.transport, ms.command, ms.args, ms.url, ms.headers, ms.env,
-			 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.created_by, ms.created_at, ms.updated_at,
+			 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.require_user_credentials,
+			 ms.created_by, ms.created_at, ms.updated_at,
 			 mag.tool_allow, mag.tool_deny
 			 FROM mcp_servers ms
 			 INNER JOIN mcp_agent_grants mag ON ms.id = mag.server_id AND mag.agent_id = $1 AND mag.enabled = true
@@ -185,7 +186,8 @@ func (s *PGMCPServerStore) ListAccessible(ctx context.Context, agentID uuid.UUID
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ms.id, ms.name, ms.display_name, ms.transport, ms.command, ms.args, ms.url, ms.headers, ms.env,
-		 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.created_by, ms.created_at, ms.updated_at,
+		 ms.api_key, ms.tool_prefix, ms.timeout_sec, ms.settings, ms.enabled, ms.require_user_credentials,
+		 ms.created_by, ms.created_at, ms.updated_at,
 		 mag.tool_allow, mag.tool_deny
 		 FROM mcp_servers ms
 		 INNER JOIN mcp_agent_grants mag ON ms.id = mag.server_id AND mag.agent_id = $1 AND mag.enabled = true
@@ -277,7 +279,7 @@ func (s *PGMCPServerStore) scanAccessibleRows(rows *sql.Rows) ([]store.MCPAccess
 			&srv.ID, &srv.Name, &displayName, &srv.Transport, &command,
 			&args, &url, &headers, &env,
 			&apiKey, &toolPrefix, &srv.TimeoutSec,
-			&srv.Settings, &srv.Enabled, &srv.CreatedBy, &srv.CreatedAt, &srv.UpdatedAt,
+			&srv.Settings, &srv.Enabled, &srv.RequireUserCredentials, &srv.CreatedBy, &srv.CreatedAt, &srv.UpdatedAt,
 			&toolAllowJSON, &toolDenyJSON,
 		); err != nil {
 			continue
