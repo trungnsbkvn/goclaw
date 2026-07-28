@@ -75,6 +75,24 @@ func (l *Loop) buildMCPToolDescs(toolNames []string, actorUserID string) map[str
 			descs[name] = desc
 		}
 	}
+	// toolNames comes from the SHARED registry, and per-user MCP tools are
+	// deliberately never registered there (cross-user identity leak — see
+	// getUserMCPTools). So the loop above can never reach them and the prompt's
+	// MCP section came out empty for exactly the tools the actor owns: the
+	// provider request carried 34 per-user tool definitions while "## Tooling"
+	// listed 5, and the model answered from the prompt ("I don't have the
+	// permissions") while intermittently calling a tool it could see in the
+	// schema. Add the actor's own tools directly — ownership of the cache entry
+	// IS the authorization, and executeToolForActor resolves them from that
+	// same map, so nothing unreachable is advertised.
+	for name, desc := range actorToolDescs {
+		if name == "mcp_tool_search" {
+			continue
+		}
+		if _, exists := descs[name]; !exists {
+			descs[name] = desc
+		}
+	}
 	if len(descs) == 0 {
 		return nil
 	}

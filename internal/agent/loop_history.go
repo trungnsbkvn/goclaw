@@ -164,6 +164,14 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 	// scoped to actorUserID returns "tool not found"). Compute actor via
 	// resolveActorUserID — same key the agent loop uses to fetch per-user MCP creds.
 	actorUserID := resolveActorUserID(userID, store.SenderIDFromContext(ctx), peerKind, channelType)
+	// Warm the actor's per-user MCP tools BEFORE the prompt is rendered. The
+	// pipeline calls getUserMCPTools later anyway (loop_pipeline_callbacks.go)
+	// and it is cached + idempotent, so this costs a map lookup on every turn
+	// but the first. Without it, turn 1 of a session renders "## Tooling" from
+	// the shared registry alone while the provider request carries the full
+	// per-user tool set — the model is told it has ~5 tools and answers "I don't
+	// have access to that", even though the definitions are right there.
+	l.getUserMCPTools(ctx, actorUserID)
 	mcpToolDescs := l.buildMCPToolDescs(toolNames, actorUserID)
 
 	// Bootstrap DM mode: only restrict tools for open agents (identity being created).
