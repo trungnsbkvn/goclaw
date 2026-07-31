@@ -777,20 +777,41 @@ success path and callers must act on it. The practical consequence: to bring in
 someone who is not a friend, create the group with `with_link: true` and send
 them the link rather than relying on `addMembers`.
 
-**Which API paths are verified.** The `group` service base URL, the payload
-encryption, the `zpw_ver`/`zpw_type` markers, the form body and the
-double-envelope decrypt are all confirmed — they are the same plumbing that
-`getmg-v2`, `getlg/v4` and `sendmsg` use today. The four API *paths* and their
-parameter names are reconstructed from zca-js, and
-`protocol/group_admin.go` says so at the top. A wrong path fails loudly with the
-server's `error_code` and the path in the error message, so it is a
-one-constant fix rather than a debugging session.
+**API paths are checked against zca-js.** Every path and parameter below was
+verified line by line against [RFS-ADRENO/zca-js](https://github.com/RFS-ADRENO/zca-js),
+the client this package was ported from:
 
-**Friend requests are deliberately absent.** They need a service key this
-account's session may not advertise, and guessing a service name *and* a path
-together produces an error nobody can diagnose. `zalo.services.list` answers the
-service half from a live session first — the service map is server-driven, and
-the advertised set varies by account and client release.
+| Operation | Path | Verb | Service |
+|---|---|---|---|
+| create group | `/api/group/create/v2` | POST (form) | `group` |
+| add members | `/api/group/invite/v2` | POST (form) | `group` |
+| remove members | `/api/group/kickout` | POST (form) | `group` |
+| invite link | `/api/group/link/new` | **GET (query)** | `group` |
+| find user by phone | `/api/friend/profile/get` | GET (query) | `friend` |
+| send friend request | `/api/friend/sendreq` | POST (form) | `friend` |
+
+Two traps that a first-pass reconstruction gets wrong, both now pinned by tests:
+
+- **`memberTypes` vs `membersTypes`.** Create sends the PLURAL, invite sends the
+  SINGULAR. Zalo's own inconsistency — normalising either breaks that call.
+- **The link endpoint is a GET** whose encrypted params ride in the query
+  string. Called as a form POST the server sees no params at all, which fails
+  far more confusingly than a wrong path would.
+
+Still unofficial: zca-js tracks Zalo's web client, so a release can move any of
+these. A stale path fails loudly with the server's `error_code` and the path in
+the message, so the fix is one constant.
+
+**Friend API: available, wired to nothing.** `FindUserByPhone` and
+`SendFriendRequest` live on the `friend` service, which is reachable only
+because the service map now retains every advertised key.
+
+`FindUserByPhone` is a read. `SendFriendRequest` is not, and nothing calls it:
+unsolicited friend requests to strangers are among the strongest
+automated-abuse signals Zalo acts on. There is also a consent question that is
+not technical — a number a customer gave for one channel being used to approach
+them on another is a change of processing purpose, which for a regulated
+business is a decision to make deliberately rather than inherit from a default.
 
 `getServiceURL` previously had no `default:` branch, so any service outside its
 five named cases returned `""` — indistinguishable from "the server did not

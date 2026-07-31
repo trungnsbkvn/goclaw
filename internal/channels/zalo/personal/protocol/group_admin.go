@@ -26,28 +26,29 @@ import (
 //	           factored out — so a bug in the plumbing would already be breaking
 //	           group messaging.
 //
-//	RECONSTRUCTED  the four API PATHS and their parameter names. They come from
-//	           the zca-js client this package was ported from, not from a
-//	           captured session. If one is wrong, Zalo answers with a non-zero
-//	           error_code and the call fails LOUDLY with that code in the error
-//	           — it does not corrupt anything or half-succeed. Fix the constant,
-//	           no other change needed.
+//	VERIFIED   the four API paths and their parameter names, checked line by line
+//	           against RFS-ADRENO/zca-js (src/apis/{createGroup,addUserToGroup,
+//	           removeUserFromGroup,enableGroupLink}.ts) — the client this package
+//	           was ported from. Three of the four matched the original
+//	           reconstruction; the link endpoint did not, see pathGroupLink.
 //
-// Deliberately NOT implemented here: friend requests. The friend API needs a
-// service key that this account's session may not advertise at all, and
-// guessing both a service name and a path at once produces an error that cannot
-// be diagnosed. ServiceNames() plus the zalo.services.list gateway method exist
-// to answer that question from a live session first.
+// Still unofficial: zca-js tracks Zalo's web client, so a Zalo release can move
+// any of these. A wrong path fails LOUDLY with the server's error_code rather
+// than corrupting anything, so the fix is one constant.
 const (
-	// pathGroupCreate creates a group. RECONSTRUCTED.
+	// pathGroupCreate creates a group. VERIFIED against zca-js createGroup.
 	pathGroupCreate = "/api/group/create/v2"
-	// pathGroupInvite adds members to an existing group. RECONSTRUCTED.
+	// pathGroupInvite adds members. VERIFIED against zca-js addUserToGroup.
 	pathGroupInvite = "/api/group/invite/v2"
-	// pathGroupKickout removes members from a group. RECONSTRUCTED.
+	// pathGroupKickout removes members. VERIFIED against zca-js removeUserFromGroup.
 	pathGroupKickout = "/api/group/kickout"
-	// pathGroupLink reads/creates a group's join link. RECONSTRUCTED, and the
-	// least certain of the four — prefer CreateGroup's own returned link.
-	pathGroupLink = "/api/group/link/create"
+	// pathGroupLink mints a group's join link.
+	//
+	// The original reconstruction guessed "/api/group/link/create" as a POST.
+	// zca-js enableGroupLink uses "/api/group/link/new" as a GET — both the path
+	// and the method were wrong, which is why this one is fetched through
+	// getGroupAPI rather than callGroupAPI.
+	pathGroupLink = "/api/group/link/new"
 )
 
 // zsourceWeb is the client-origin marker Zalo web sends on group mutations.
@@ -107,14 +108,19 @@ func CreateGroup(ctx context.Context, sess *Session, name string, memberIDs []st
 	if withLink {
 		createLink = 1
 	}
+	// Field names follow zca-js createGroup exactly. Note the asymmetry with
+	// AddGroupMembers below: create sends "membersTypes" (plural members),
+	// invite sends "memberTypes" (singular). That is Zalo's own inconsistency,
+	// not a typo here — normalising either one breaks that call.
 	payload := map[string]any{
 		"clientId":     time.Now().UnixMilli(),
 		"gname":        name,
-		"gdesc":        "",
+		"gdesc":        nil,
 		"members":      memberIDs,
 		"membersTypes": memberTypes(len(memberIDs)),
 		"nameChanged":  1,
 		"createLink":   createLink,
+		"clientLang":   sess.Language,
 		"zsource":      zsourceWeb,
 		"imei":         sess.IMEI,
 	}
@@ -154,12 +160,16 @@ func AddGroupMembers(ctx context.Context, sess *Session, groupID string, memberI
 		return nil, fmt.Errorf("zalo_personal: no members to add")
 	}
 
+	// "memberTypes", NOT "membersTypes" — the invite endpoint spells it
+	// singular while create spells it plural. Zalo's inconsistency; matching
+	// zca-js addUserToGroup verbatim is the only safe move. The original
+	// reconstruction used the plural here and would have been rejected.
 	payload := map[string]any{
-		"grid":         groupID,
-		"members":      memberIDs,
-		"membersTypes": memberTypes(len(memberIDs)),
-		"imei":         sess.IMEI,
-		"clientLang":   sess.Language,
+		"grid":        groupID,
+		"members":     memberIDs,
+		"memberTypes": memberTypes(len(memberIDs)),
+		"imei":        sess.IMEI,
+		"clientLang":  sess.Language,
 	}
 
 	data, err := callGroupAPI(ctx, sess, pathGroupInvite, payload)
@@ -207,7 +217,10 @@ func GroupInviteLink(ctx context.Context, sess *Session, groupID string) (string
 		"imei": sess.IMEI,
 	}
 
-	data, err := callGroupAPI(ctx, sess, pathGroupLink, payload)
+	// GET, not POST — this endpoint carries its encrypted params in the query
+	// string. Sending it as a form POST (what the first cut did) reaches the
+	// server with no params at all.
+	data, err := getGroupAPI(ctx, sess, pathGroupLink, payload)
 	if err != nil {
 		return "", fmt.Errorf("zalo_personal: group invite link: %w", err)
 	}
@@ -260,13 +273,22 @@ func callGroupAPI(ctx context.Context, sess *Session, apiPath string, payload ma
 	}
 	defer resp.Body.Close()
 
+	return readEncryptedEnvelope(sess, resp, apiPath)
+}
+
+// readEncryptedEnvelope unwraps the OUTER envelope, then decrypts the data
+// field (which holds a second envelope — decryptDataField handles that).
+//
+// Shared by the POST and GET helpers so the error shape is identical whichever
+// verb an endpoint uses.
+func readEncryptedEnvelope(sess *Session, resp *http.Response, apiPath string) (json.RawMessage, error) {
 	var envelope Response[*string]
 	if err := readJSON(resp, &envelope); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	if envelope.ErrorCode != 0 {
-		// A wrong RECONSTRUCTED path lands here — surface the code and message
-		// verbatim so the constant can be corrected without a capture session.
+		// A stale path lands here — surface the code and message verbatim so the
+		// constant can be corrected without a capture session.
 		return nil, fmt.Errorf("error code %d: %s (path %s)",
 			envelope.ErrorCode, envelope.ErrorMessage, apiPath)
 	}
@@ -274,6 +296,40 @@ func callGroupAPI(ctx context.Context, sess *Session, apiPath string, payload ma
 		return nil, fmt.Errorf("empty response data (path %s)", apiPath)
 	}
 	return decryptDataField(sess, *envelope.Data)
+}
+
+// getGroupAPI is callGroupAPI's GET counterpart: same encryption and same
+// double-envelope decrypt, but the encrypted blob rides in the query string
+// instead of a form body.
+//
+// Both shapes exist in this protocol and are not interchangeable — the group
+// service rejects a GET endpoint called as a form POST by simply not seeing the
+// params. FetchFriends uses this shape too.
+func getGroupAPI(ctx context.Context, sess *Session, apiPath string, payload map[string]any) (json.RawMessage, error) {
+	baseURL := getServiceURL(sess, "group")
+	if baseURL == "" {
+		return nil, fmt.Errorf("zalo_personal: no group service URL")
+	}
+
+	encData, err := encryptPayload(sess, payload)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt payload: %w", err)
+	}
+
+	reqURL := makeURL(sess, baseURL+apiPath, map[string]any{"params": encData}, true)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	setDefaultHeaders(req, sess)
+
+	resp, err := sess.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return readEncryptedEnvelope(sess, resp, apiPath)
 }
 
 // parseMemberChange reads the per-member failure list shared by invite/kick.

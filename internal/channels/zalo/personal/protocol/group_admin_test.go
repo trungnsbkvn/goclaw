@@ -127,6 +127,14 @@ func TestCreateGroupSendsEncryptedPayload(t *testing.T) {
 	if gotPayload["createLink"] != float64(1) {
 		t.Errorf("createLink = %v, want 1", gotPayload["createLink"])
 	}
+	// zca-js createGroup sends clientLang; the first cut omitted it.
+	if gotPayload["clientLang"] != DefaultLanguage {
+		t.Errorf("clientLang = %v, want %q", gotPayload["clientLang"], DefaultLanguage)
+	}
+	// create spells it PLURAL (see the invite test for the singular twin).
+	if _, ok := gotPayload["membersTypes"]; !ok {
+		t.Error(`create must send "membersTypes" (plural)`)
+	}
 	// members and membersTypes are PARALLEL arrays; a length mismatch is
 	// rejected by the server in a way that is hard to read.
 	members, _ := gotPayload["members"].([]any)
@@ -199,6 +207,15 @@ func TestAddGroupMembersReportsPartialFailure(t *testing.T) {
 	if gotPayload["grid"] != "g-1" {
 		t.Errorf("grid = %v", gotPayload["grid"])
 	}
+	// The asymmetry that a first reconstruction gets wrong: invite spells it
+	// "memberTypes" (SINGULAR) while create spells it "membersTypes". Sending
+	// the plural here is rejected by the server.
+	if _, ok := gotPayload["memberTypes"]; !ok {
+		t.Error(`invite must send "memberTypes" (singular), not "membersTypes"`)
+	}
+	if _, wrong := gotPayload["membersTypes"]; wrong {
+		t.Error(`invite must NOT send the plural "membersTypes"`)
+	}
 	// A nil error here does NOT mean everyone joined — adding a non-friend is
 	// commonly refused per-member. Callers must read ErrorMembers.
 	if len(res.ErrorMembers) != 1 || res.ErrorMembers[0] != "u9" {
@@ -236,6 +253,57 @@ func TestRemoveGroupMembers(t *testing.T) {
 	}
 	if gotPath != pathGroupKickout {
 		t.Errorf("path = %q, want %q", gotPath, pathGroupKickout)
+	}
+}
+
+// decodeQueryParams reverses a GET-shaped call, whose encrypted params ride in
+// the query string rather than a form body.
+func decodeQueryParams(t *testing.T, r *http.Request) map[string]any {
+	t.Helper()
+	raw := r.URL.Query().Get("params")
+	if raw == "" {
+		t.Fatal("GET request carried no params query field")
+	}
+	plain, err := DecodeAESCBC([]byte(testAESKey), raw)
+	if err != nil {
+		t.Fatalf("decrypt query params: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(plain, &out); err != nil {
+		t.Fatalf("parse query params: %v", err)
+	}
+	return out
+}
+
+// The link endpoint is a GET whose params ride in the QUERY STRING. The first
+// reconstruction had it as a form POST to a different path — the server would
+// have seen no params at all, which is a far more confusing failure than a 404.
+func TestGroupInviteLinkUsesGetWithQueryParams(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotPayload map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		gotPayload = decodeQueryParams(t, r)
+		_, _ = w.Write([]byte(encodeReply(t, map[string]any{"link": "https://zalo.me/g/xyz"})))
+	}))
+	defer srv.Close()
+
+	link, err := GroupInviteLink(context.Background(), newTestSession(t, srv), "g-1")
+	if err != nil {
+		t.Fatalf("GroupInviteLink: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %s, want GET", gotMethod)
+	}
+	if gotPath != pathGroupLink {
+		t.Errorf("path = %q, want %q", gotPath, pathGroupLink)
+	}
+	if gotPayload["grid"] != "g-1" {
+		t.Errorf("grid = %v", gotPayload["grid"])
+	}
+	if link != "https://zalo.me/g/xyz" {
+		t.Errorf("link = %q", link)
 	}
 }
 
