@@ -185,6 +185,14 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 		"stream":   stream,
 	}
 
+	// Chat identity for self-hosted openai_compat backends that run their own
+	// agent loop. Opt-in per provider row and gated to providerType ==
+	// "openai_compat"; nil for every other provider and for utility calls that
+	// carry no chat context. See openai_goclaw_context.go.
+	if md := p.buildContextMetadata(req); md != nil {
+		body["metadata"] = md
+	}
+
 	if len(req.Tools) > 0 {
 		body["tools"] = buildToolsPayload(p.schemaProviderName(), req.Tools)
 		if tc, ok := req.Options[OptToolChoice]; ok && tc != nil {

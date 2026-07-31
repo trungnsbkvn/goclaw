@@ -212,6 +212,28 @@ func ParseThinkingEnabled(settings json.RawMessage) *bool {
 	return s.ThinkingEnabled
 }
 
+// ParseContextPassthrough reports whether this provider row opts in to emitting
+// chat identity (chat_id / channel / peer_kind / user_id / session_key) as the
+// OpenAI `metadata` object.
+//
+// Only meaningful for `openai_compat` rows pointing at a SELF-HOSTED backend
+// that runs its own agent loop and therefore needs to know which conversation a
+// request belongs to. Defaults to false, and the provider re-checks
+// providerType before emitting, so a stray flag on a vendor row cannot leak
+// operational chat metadata to a third party.
+func ParseContextPassthrough(settings json.RawMessage) bool {
+	if len(settings) == 0 {
+		return false
+	}
+	var s struct {
+		ContextPassthrough bool `json:"context_passthrough"`
+	}
+	if json.Unmarshal(settings, &s) != nil {
+		return false
+	}
+	return s.ContextPassthrough
+}
+
 // ParseChatGPTOAuthProviderSettings extracts provider-level Codex pool defaults from settings JSONB.
 func ParseChatGPTOAuthProviderSettings(settings json.RawMessage) *ChatGPTOAuthProviderSettings {
 	if len(settings) == 0 {
