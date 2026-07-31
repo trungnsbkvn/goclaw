@@ -819,6 +819,13 @@ type FriendProvider interface {
 // it was offered rather than to guess and read the failure.
 type ServiceCatalogProvider interface {
 	ServiceNames(ctx context.Context) ([]string, error)
+	// SelfUserID is the account's OWN id on the connected session.
+	//
+	// Callers need it to refuse acting on themselves. Zalo does not defend
+	// against this: /api/friend/sendreq returns SUCCESS when given the logged-in
+	// account's own uid (verified 2026-07-31), so a caller that cannot recognise
+	// its own id will happily record a contact request that can never complete.
+	SelfUserID(ctx context.Context) (string, error)
 }
 
 // MetadataRefreshFailure records one group whose presentation metadata could

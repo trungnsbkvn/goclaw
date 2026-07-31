@@ -223,6 +223,12 @@ const (
 	// capability question gets answered without shipping a guess.
 	MethodZaloServicesList = "zalo.services.list"
 
+	// MethodZaloSelf reports the connected account's OWN user id. Needed so a
+	// caller can refuse to act on itself: Zalo accepts a friend request aimed at
+	// the logged-in account's own uid and reports success, so "am I about to
+	// contact myself?" cannot be answered from the API's response alone.
+	MethodZaloSelf = "zalo.self"
+
 	// MethodZaloFriendFind resolves a phone number to a Zalo profile. A read,
 	// but a privacy-sensitive one — it turns a phone number into an identity.
 	MethodZaloFriendFind = "zalo.friend.find"

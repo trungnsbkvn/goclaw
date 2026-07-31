@@ -38,6 +38,7 @@ func (m *GroupMethods) Register(router *gateway.MethodRouter) {
 	router.Register(goclawprotocol.MethodZaloGroupRemoveMembers, m.handleRemoveMembers)
 	router.Register(goclawprotocol.MethodZaloGroupInviteLink, m.handleInviteLink)
 	router.Register(goclawprotocol.MethodZaloServicesList, m.handleServicesList)
+	router.Register(goclawprotocol.MethodZaloSelf, m.handleSelf)
 	router.Register(goclawprotocol.MethodZaloFriendFind, m.handleFriendFind)
 	router.Register(goclawprotocol.MethodZaloFriendRequest, m.handleFriendRequest)
 	router.Register(goclawprotocol.MethodZaloFriendList, m.handleFriendList)
@@ -266,4 +267,16 @@ func (m *GroupMethods) handleServicesList(ctx context.Context, client *gateway.C
 		return
 	}
 	client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{"services": names}))
+}
+
+// handleSelf reports the connected account's own uid.
+func (m *GroupMethods) handleSelf(ctx context.Context, client *gateway.Client, req *goclawprotocol.RequestFrame) {
+	p := parseGroupParams(req)
+
+	uid, err := m.channelMgr.SelfUserID(ctx, p.channelName())
+	if err != nil {
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInternal, err.Error()))
+		return
+	}
+	client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{"user_id": uid}))
 }

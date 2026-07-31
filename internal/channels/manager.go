@@ -481,6 +481,21 @@ func (m *Manager) ServiceNames(ctx context.Context, channelName string) ([]strin
 	return scp.ServiceNames(ctx)
 }
 
+// SelfUserID returns the connected account's own id on the given channel.
+func (m *Manager) SelfUserID(ctx context.Context, channelName string) (string, error) {
+	m.mu.RLock()
+	ch, ok := m.channels[channelName]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("channel %q not found", channelName)
+	}
+	scp, ok := ch.(ServiceCatalogProvider)
+	if !ok {
+		return "", fmt.Errorf("channel %q does not expose its own id", channelName)
+	}
+	return scp.SelfUserID(ctx)
+}
+
 // ResolveGroupTitle delegates to the channel's GroupTitleProvider if available.
 func (m *Manager) ResolveGroupTitle(ctx context.Context, channelName, chatID string) (string, error) {
 	m.mu.RLock()

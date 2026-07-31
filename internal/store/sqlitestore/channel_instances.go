@@ -150,6 +150,14 @@ func (s *SQLiteChannelInstanceStore) scanInstances(rows *sql.Rows) ([]store.Chan
 			&creds, &config,
 			&inst.Enabled, &inst.CreatedBy, createdAt, updatedAt, &inst.TenantID,
 		); err != nil {
+			// Log, don't vanish. A silent `continue` here means a configured
+			// channel simply never starts: the gateway reports "no channels
+			// enabled", every RPC answers "channel not found", and nothing
+			// anywhere names the row or the reason. That failure is
+			// indistinguishable from "you forgot to configure it", which is the
+			// worst possible thing for it to look like.
+			slog.Error("channel instance row skipped: scan failed",
+				"error", err, "hint", "row is present and enabled but unreadable — check column types")
 			continue
 		}
 		inst.CreatedAt = createdAt.Time

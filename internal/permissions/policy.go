@@ -488,6 +488,7 @@ func isReadMethod(method string) bool {
 		// Zalo service catalog — reports which endpoints the connected account
 		// was offered at login. Pure diagnostic read, no side effects.
 		protocol.MethodZaloServicesList,
+		protocol.MethodZaloSelf,
 
 		// Friend lookup + friend list. Reads: no message is sent and nothing
 		// is created. Kept out of the write tier so the phone→identity lookup

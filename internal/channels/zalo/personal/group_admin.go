@@ -172,3 +172,15 @@ func (c *Channel) ServiceNames(_ context.Context) ([]string, error) {
 	}
 	return sess.LoginInfo.ZpwServiceMapV3.ServiceNames(), nil
 }
+
+// SelfUserID returns the connected account's own Zalo uid.
+func (c *Channel) SelfUserID(_ context.Context) (string, error) {
+	sess := c.session()
+	if sess == nil {
+		return "", fmt.Errorf("zalo_personal: not connected")
+	}
+	if sess.UID == "" {
+		return "", fmt.Errorf("zalo_personal: session has no uid")
+	}
+	return sess.UID, nil
+}
