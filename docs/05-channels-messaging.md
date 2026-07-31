@@ -262,6 +262,7 @@ flowchart TD
 | Connection | Long polling | WS (default) / Webhook | Gateway events | Socket Mode | Direct protocol (in-process) | Long polling | Internal protocol | Long polling (REST) |
 | DM support | Yes | Yes | Yes | Yes | Yes | Yes (DM only) | Yes | Yes |
 | Group support | Yes (mention gating) | Yes | Yes | Yes (mention gating + thread cache) | Yes | No | Yes | Yes |
+| Group admin (create/invite) | -- | -- | -- | -- | -- | -- | Yes (`zalo.group.*`) | -- |
 | Forum/Topics | Yes (per-topic config) | Yes (topic session mode) | -- | -- | -- | -- | -- | -- |
 | Message limit | 4,096 chars | Configurable (default 4,000) | 2,000 chars | 4,000 chars | WhatsApp native limit | 2,000 chars | 2,000 chars | 4,096 chars |
 | Streaming | Typing indicator | Streaming message cards | Edit "Thinking..." | Edit "Thinking..." (throttled 1s) | No | No | No | No |
@@ -745,6 +746,56 @@ discarded quietly.
 numerics inconsistently — the same field arrives as `"10.77"` on one payload
 shape and `10.77` on another, and a plain `float64` makes the whole content
 object fail to unmarshal on the quoted variant.
+
+### Group administration
+
+Zalo Personal can create groups and change their membership, exposed as gateway
+RPC and as the `channels.GroupAdminProvider` capability:
+
+| Method | Role | Purpose |
+|---|---|---|
+| `zalo.group.create` | operator | Create a group, optionally minting a join link |
+| `zalo.group.addMembers` | operator | Invite uids into an existing group |
+| `zalo.group.removeMembers` | operator | Kick uids (needs admin on the group) |
+| `zalo.group.inviteLink` | operator | Read/create a group's join link |
+| `zalo.services.list` | viewer | Which service endpoints this session was offered |
+
+`GroupAdminProvider` is separate from the existing `GroupListProvider` on
+purpose: listing is a cheap read every connected channel can do, whereas these
+are writes that create user-visible artifacts and carry account risk. A channel
+does not acquire group creation by gaining group listing.
+
+They run on the **live** session, unlike `zalo.personal.contacts`, which logs in
+with stored credentials per call. One login per group operation is exactly the
+repeated-auth pattern that gets an account flagged, and the channel is already
+authenticated whenever a caller is in a position to create a group.
+
+**Member addition is partial by design.** Zalo creates the group and refuses
+individual invitees — normally anyone who is not a friend of the account — so a
+nil error does *not* mean everyone joined. `error_members` is returned on the
+success path and callers must act on it. The practical consequence: to bring in
+someone who is not a friend, create the group with `with_link: true` and send
+them the link rather than relying on `addMembers`.
+
+**Which API paths are verified.** The `group` service base URL, the payload
+encryption, the `zpw_ver`/`zpw_type` markers, the form body and the
+double-envelope decrypt are all confirmed — they are the same plumbing that
+`getmg-v2`, `getlg/v4` and `sendmsg` use today. The four API *paths* and their
+parameter names are reconstructed from zca-js, and
+`protocol/group_admin.go` says so at the top. A wrong path fails loudly with the
+server's `error_code` and the path in the error message, so it is a
+one-constant fix rather than a debugging session.
+
+**Friend requests are deliberately absent.** They need a service key this
+account's session may not advertise, and guessing a service name *and* a path
+together produces an error nobody can diagnose. `zalo.services.list` answers the
+service half from a live session first — the service map is server-driven, and
+the advertised set varies by account and client release.
+
+`getServiceURL` previously had no `default:` branch, so any service outside its
+five named cases returned `""` — indistinguishable from "the server did not
+advertise it". It now falls back to the full advertised map and, on a genuine
+miss, warns with the names that *were* offered.
 
 ### Inbound buffer overflow
 
