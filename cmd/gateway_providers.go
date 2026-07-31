@@ -445,6 +445,10 @@ func registerProvidersFromDB(registry *providers.Registry, provStore store.Provi
 			prov := providers.NewOpenAIProvider(p.Name, p.APIKey, base, model)
 			prov.WithProviderType(p.ProviderType)
 			prov.WithThinkingEnabled(store.ParseThinkingEnabled(p.Settings))
+			// Self-hosted backends that run their own agent loop need to know
+			// which conversation a request belongs to. Opt-in, and the provider
+			// itself re-checks providerType == "openai_compat" before emitting.
+			prov.WithContextPassthrough(store.ParseContextPassthrough(p.Settings))
 			if p.ProviderType == store.ProviderOpenRouter {
 				prov.WithSiteInfo("https://goclaw.sh", "GoClaw")
 			}

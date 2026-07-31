@@ -327,6 +327,33 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 		ph.SetPendingHistoryTenantID(inst.TenantID)
 	}
 
+	// Credential write-back. Some channels (Zalo Personal) are issued rotating
+	// session cookies by the platform during normal operation. Those live only
+	// in the in-memory jar, so without this every restart replays the ORIGINAL
+	// credentials captured at pairing time — the integration's lifetime is then
+	// capped by that first credential set and ends in a silent auth death.
+	//
+	// The ChannelFactory signature carries neither the instance ID nor the
+	// store, so the wiring happens here (same duck-typing pattern as SetAgentID
+	// above). Channels that do not rotate credentials simply don't implement it.
+	if cp, ok := ch.(interface {
+		SetCredentialPersister(func(any) error)
+	}); ok {
+		instID := inst.ID
+		tenantID := inst.TenantID
+		cp.SetCredentialPersister(func(cred any) error {
+			blob, err := json.Marshal(cred)
+			if err != nil {
+				return fmt.Errorf("marshal refreshed credentials: %w", err)
+			}
+			// Detached context: this can fire during a restart while the caller's
+			// context is already cancelled, and losing the refresh would silently
+			// reintroduce the stale-cookie problem.
+			saveCtx := store.WithTenantID(context.WithoutCancel(ctx), tenantID)
+			return l.store.Update(saveCtx, instID, map[string]any{"credentials": blob})
+		})
+	}
+
 	// Wire pending message auto-compaction.
 	// Priority: config provider/model > agent's provider/model > fallback.
 	if pc, ok := ch.(PendingCompactable); ok && l.providerReg != nil {

@@ -17,13 +17,41 @@ import (
 )
 
 // extractContentAndMedia returns text content with media tags plus local media paths.
-func extractContentAndMedia(content protocol.Content) (string, []string) {
+//
+// msgType is Zalo's own type tag. It was parsed into TMessage from the start but
+// never read, so content extraction relied entirely on sniffing for a URL. Any
+// message shape WITHOUT a url — sticker, location, contact card — therefore
+// produced empty content, and the handlers' `if content == "" { return }` guard
+// dropped it before publishing, with no log line anywhere. From the customer's
+// side the bot simply ignored them.
+//
+// The fix is a describing fallback rather than an exhaustive type switch:
+// enumerating Zalo's type strings would go stale the moment they add one, and the
+// failure mode of a stale list is the silent drop we are removing. Anything we
+// cannot render as media now becomes a human-readable placeholder, so the agent
+// can at least respond sensibly ("em chưa xem được nhãn dán này…") instead of
+// going mute.
+func extractContentAndMedia(content protocol.Content, msgType string) (string, []string) {
 	if text := content.Text(); text != "" {
 		return text, nil
 	}
 	att := content.ParseAttachment()
 	if att == nil || att.URL() == "" {
+		// No downloadable payload. Describe it instead of dropping it.
+		if desc := describeNonMediaContent(att, msgType); desc != "" {
+			slog.Debug("zalo_personal: non-media message rendered as placeholder",
+				"msg_type", msgType, "rendered", desc)
+			return desc, nil
+		}
+		slog.Warn("zalo_personal: dropping message with no renderable content",
+			"msg_type", msgType, "has_attachment", att != nil)
 		return "", nil
+	}
+
+	// A location share can also carry a map thumbnail; the coordinates ARE the
+	// message, so prefer them over downloading a picture of a map.
+	if att.HasLocation() {
+		return describeNonMediaContent(att, msgType), nil
 	}
 
 	filePath, err := downloadFile(context.Background(), att.URL())
@@ -32,7 +60,8 @@ func extractContentAndMedia(content protocol.Content) (string, []string) {
 		if text := content.AttachmentText(); text != "" {
 			return text, nil
 		}
-		return "", nil
+		// Still better to say something than to go silent.
+		return describeNonMediaContent(att, msgType), nil
 	}
 
 	mimeType := media.DetectMIMEType(filePath)

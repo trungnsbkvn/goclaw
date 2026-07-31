@@ -22,7 +22,7 @@ func TestExtractContentAndMediaWithQuote_TextQuote(t *testing.T) {
 		Msg:   "Tao task giao cho Hao.",
 	}
 
-	got, media := extractContentAndMediaWithQuote(current, quote)
+	got, media := extractContentAndMediaWithQuote(current, quote, "")
 	if len(media) != 0 {
 		t.Fatalf("media = %v, want none", media)
 	}
@@ -60,7 +60,7 @@ func TestExtractContentAndMediaWithQuote_NestedStyleReply(t *testing.T) {
 		Msg:   "@Duong Anh Hao tao task follow Zalo reply context.",
 	}
 
-	got, media := extractContentAndMediaWithQuote(current, quote)
+	got, media := extractContentAndMediaWithQuote(current, quote, "")
 	if len(media) != 0 {
 		t.Fatalf("media = %v, want none", media)
 	}

@@ -25,6 +25,12 @@ type OpenAIProvider struct {
 	noAuthHeader    bool              // when true, doRequest() skips setting Authorization (e.g. Vertex OAuth transport injects its own)
 	ollamaNumCtx    *int              // optional Ollama options.num_ctx override (nil = use queried or default value)
 	thinkingEnabled *bool             // provider-level override for "think" on Ollama endpoints (nil = default off)
+	// contextPassthrough emits chat identity (chat_id/channel/peer_kind/…) as the
+	// OpenAI `metadata` object, so a SELF-HOSTED openai_compat backend can run the
+	// agent loop itself and know which conversation a request belongs to. Opt-in
+	// per provider row and hard-gated to providerType == "openai_compat" — chat
+	// metadata must never reach a third-party host. See openai_goclaw_context.go.
+	contextPassthrough bool
 }
 
 func NewOpenAIProvider(name, apiKey, apiBase, defaultModel string) *OpenAIProvider {
