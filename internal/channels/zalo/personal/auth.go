@@ -23,6 +23,7 @@ func (c *Channel) authenticate(ctx context.Context) (*protocol.Session, error) {
 		if err := protocol.LoginWithCredentials(ctx, sess, *c.preloadedCreds); err != nil {
 			return nil, fmt.Errorf("preloaded credentials failed: %w", err)
 		}
+		c.persistRefreshedCredentials(sess)
 		return sess, nil
 	}
 
@@ -33,6 +34,7 @@ func (c *Channel) authenticate(ctx context.Context) (*protocol.Session, error) {
 		if err := protocol.LoginWithCredentials(ctx, sess, *cred); err != nil {
 			slog.Warn("zalo_personal: saved credentials failed, falling back to QR", "error", err)
 		} else {
+			c.persistRefreshedCredentials(sess)
 			return sess, nil
 		}
 	}
@@ -59,6 +61,53 @@ func (c *Channel) authenticate(ctx context.Context) (*protocol.Session, error) {
 // SetPreloadedCredentials sets credentials from DB factory.
 func (c *Channel) SetPreloadedCredentials(cred *protocol.Credentials) {
 	c.preloadedCreds = cred
+}
+
+// SetCredentialPersister registers the callback used to write refreshed
+// credentials back to wherever they came from (the channel_instances row for a
+// DB-backed instance). Optional — a config-based channel persists to its file
+// instead, and a nil persister simply skips the DB write.
+func (c *Channel) SetCredentialPersister(fn func(any) error) {
+	c.persistCreds = fn
+}
+
+// persistRefreshedCredentials snapshots the live cookie jar and writes it back.
+//
+// Zalo rotates session cookies during normal operation, but before this the
+// rotated values existed only in memory: every restart replayed the ORIGINAL
+// cookies captured at QR time, so the integration's lifetime was capped by that
+// first cookie set and ended in a silent death (see listen.go's give-up path).
+// Snapshotting after each successful login makes the session self-renewing.
+//
+// Best-effort throughout: this runs on the auth path, and failing to save a
+// refreshed cookie must never prevent an otherwise-good login from proceeding.
+// The worst case is simply the old behaviour.
+func (c *Channel) persistRefreshedCredentials(sess *protocol.Session) {
+	cred := protocol.ExportCredentials(sess)
+	if cred == nil {
+		// Refuses to export an empty/unusable jar rather than overwrite a good
+		// saved set with a dud.
+		return
+	}
+
+	// Keep the in-memory copy current so a later restart in this same process
+	// replays the refreshed cookies even if persistence below fails.
+	c.preloadedCreds = cred
+
+	if c.persistCreds != nil {
+		if err := c.persistCreds(cred); err != nil {
+			slog.Warn("zalo_personal: could not persist refreshed credentials (session still valid in memory)",
+				"channel", c.Name(), "error", err)
+		}
+		return
+	}
+
+	// Config-based channel: refresh the credentials file.
+	if path := c.resolveCredentialsPath(); path != "" {
+		if err := saveCredentials(path, cred); err != nil {
+			slog.Warn("zalo_personal: could not save refreshed credentials", "path", path, "error", err)
+		}
+	}
 }
 
 func (c *Channel) resolveCredentialsPath() string {

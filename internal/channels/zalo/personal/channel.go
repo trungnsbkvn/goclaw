@@ -31,6 +31,17 @@ type Channel struct {
 
 	// Pre-loaded credentials (from DB or from file/QR as fallback).
 	preloadedCreds *protocol.Credentials
+	// persistCreds writes refreshed credentials back to their source (the
+	// channel_instances row for a DB-backed instance). Zalo rotates session
+	// cookies during operation; without a write-back path every restart replays
+	// the ORIGINAL cookies from QR time and the integration eventually dies.
+	// nil = config-based channel, which persists to its credentials file instead.
+	//
+	// Takes `any` rather than *protocol.Credentials so the instance loader can
+	// wire it by duck-typing: `internal/channels` cannot import this package
+	// (personal already imports channels — that would be a cycle), so the
+	// interface it asserts against must not name a type from here.
+	persistCreds func(any) error
 
 	stopCh   chan struct{}
 	stopOnce sync.Once

@@ -36,7 +36,7 @@ func (c *Channel) handleDM(msg protocol.UserMessage) {
 		return
 	}
 
-	body, media := extractContentAndMedia(msg.Data.Content)
+	body, media := extractContentAndMedia(msg.Data.Content, msg.Data.MsgType)
 	// A reply to an image should carry the image itself, not just the
 	// "[Quoted image]" placeholder — download it and attach as media.
 	quoteMedia := extractQuoteMedia(msg.Data.Quote)
@@ -97,7 +97,7 @@ func (c *Channel) handleGroupMessage(msg protocol.GroupMessage) {
 		senderName = senderID
 	}
 
-	body, media := extractContentAndMedia(msg.Data.Content)
+	body, media := extractContentAndMedia(msg.Data.Content, msg.Data.MsgType)
 	// A reply to an image should carry the image itself, not just the
 	// "[Quoted image]" placeholder — download it and attach as media.
 	quoteMedia := extractQuoteMedia(msg.Data.Quote)
@@ -197,8 +197,8 @@ func (c *Channel) startTyping(threadID string, threadType protocol.ThreadType) {
 	ctrl.Start()
 }
 
-func extractContentAndMediaWithQuote(content protocol.Content, quote *protocol.TQuote) (string, []string) {
-	text, media := extractContentAndMedia(content)
+func extractContentAndMediaWithQuote(content protocol.Content, quote *protocol.TQuote, msgType string) (string, []string) {
+	text, media := extractContentAndMedia(content, msgType)
 	quoteMedia := extractQuoteMedia(quote)
 	media = append(media, quoteMedia...)
 	composed := replycontext.Compose(formatQuoteContext(quote), text)

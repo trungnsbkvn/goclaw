@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -250,9 +251,9 @@ func (ln *Listener) sendPing(ctx context.Context) {
 	body, _ := json.Marshal(data)
 
 	buf := make([]byte, 4+len(body))
-	buf[0] = 1 // version
+	buf[0] = 1                                 // version
 	binary.LittleEndian.PutUint16(buf[1:3], 2) // cmd=2
-	buf[3] = 1 // subCmd=1
+	buf[3] = 1                                 // subCmd=1
 	copy(buf[4:], body)
 
 	ln.mu.RLock()
@@ -433,20 +434,55 @@ func buildListenerRetryStates(settings *Settings) map[string]*retryState {
 	return states
 }
 
-// emit sends to a buffered channel; drops oldest if full.
+// droppedMessages counts inbound messages evicted by emit's overflow path.
+//
+// The eviction itself is a deliberate design choice — under sustained overload a
+// chat bot is better off keeping the NEWEST messages than blocking the WebSocket
+// reader. What was wrong is that it happened in total silence: a customer's
+// question could vanish between the socket and the agent with no log line, no
+// counter, and no way to tell afterwards that anything had been lost.
+//
+// A burst of short messages is exactly the normal Vietnamese Zalo typing pattern
+// (4-6 fragments in a few seconds), so this path is reachable in ordinary use,
+// not just under attack.
+var droppedMessages atomic.Int64
+
+// DroppedMessageCount returns how many inbound messages have been evicted
+// because the listener buffer was full. Exposed so an operator surface can show
+// it — a non-zero and rising value means the consumer is not keeping up and
+// customers are losing messages.
+func DroppedMessageCount() int64 { return droppedMessages.Load() }
+
+// emit sends to a buffered channel, evicting the OLDEST entry when full.
+//
+// Every eviction is now counted and logged. Logging is rate-limited to the
+// powers-of-two-ish pattern below so a sustained overload produces a visible
+// signal without flooding the log with one line per lost message.
 func emit[T any](ctx context.Context, ch chan T, val T) {
 	select {
 	case <-ctx.Done():
 		return
 	case ch <- val:
 	default:
+		// Full: evict oldest, then push. Both sends stay non-blocking so the
+		// WebSocket reader is never stalled by a slow consumer.
+		evicted := false
 		select {
 		case <-ch:
+			evicted = true
 		default:
 		}
 		select {
 		case ch <- val:
 		default:
+		}
+
+		if evicted {
+			n := droppedMessages.Add(1)
+			if n <= 3 || n%50 == 0 {
+				slog.Warn("zalo_personal: inbound buffer full — DROPPED the oldest message; a customer message may have been lost",
+					"dropped_total", n, "buffer_size", msgBufferSize)
+			}
 		}
 	}
 }

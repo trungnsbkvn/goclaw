@@ -265,7 +265,7 @@ flowchart TD
 | Forum/Topics | Yes (per-topic config) | Yes (topic session mode) | -- | -- | -- | -- | -- | -- |
 | Message limit | 4,096 chars | Configurable (default 4,000) | 2,000 chars | 4,000 chars | WhatsApp native limit | 2,000 chars | 2,000 chars | 4,096 chars |
 | Streaming | Typing indicator | Streaming message cards | Edit "Thinking..." | Edit "Thinking..." (throttled 1s) | No | No | No | No |
-| Media | Photos, voice, files | Images, files (30 MB) | Files, embeds | Files (download w/ SSRF protection) | Images, audio, video, documents | Images (5 MB) | -- | Files (20 MB default) |
+| Media | Photos, voice, files | Images, files (30 MB) | Files, embeds | Files (download w/ SSRF protection) | Images, audio, video, documents | Images (5 MB) | Images, files (in 20 MB / out 25 MB) | Files (20 MB default) |
 | Speech-to-text | Yes (STT proxy) | -- | -- | -- | -- | -- | -- | -- |
 | Voice routing | Yes (VoiceAgentID) | -- | -- | -- | -- | -- | -- | -- |
 | Rich formatting | Markdown → HTML | Card messages | Markdown | Markdown → mrkdwn | Plain text | Plain text | Plain text | Plain text |
@@ -703,6 +703,57 @@ Zalo Personal uses an unofficial, reverse-engineered protocol. The account used 
 - Exponential backoff up to 60 seconds
 - Special handling for error code 3000: 60-second initial delay
 - Typing controller per thread
+
+### Session lifetime and credential refresh
+
+Zalo rotates session cookies (`zpw_sek` and friends) via `Set-Cookie` during
+normal operation. Those land in the live cookie jar, and
+`protocol.ExportCredentials` snapshots them back after every successful login —
+to the `channel_instances.credentials` row for a DB-backed instance (wired by the
+instance loader) or to the credentials file for a config-based one.
+
+Without that write-back, every restart replayed the cookies captured at QR time,
+so the integration's lifetime was capped by that first credential set. The export
+refuses to persist an empty jar rather than overwrite a good set with a dud.
+
+**Expiry is surfaced, not silent.** When the channel exhausts its restart budget
+it now calls `MarkFailed(..., ChannelFailureKindAuth, retryable)`, which
+`health.go` turns into the "Reconnect the channel session" remediation. Previously
+it fell through to a benign `Stopped` state with `FailureKind = Unknown`, so an
+expired session produced no classification, no alert and no re-auth prompt — the
+channel simply stopped answering until someone restarted the process.
+
+Note that for a DB-backed instance the QR re-login path is not reachable from
+`restart` (preloaded credentials short-circuit `authenticate`), so re-auth must be
+driven externally via the `zalo.personal.qr.start` gateway method.
+
+### Message types
+
+Content extraction sniffs for a downloadable URL. Message shapes that carry none
+— stickers, locations, contact cards — fall back to a **describing placeholder**
+built from `msgType` plus any attachment title, and locations render their
+coordinates and a maps link rather than downloading a picture of a map.
+
+This is a fallback rather than an exhaustive type switch on purpose: enumerating
+Zalo's type strings goes stale the moment they add one, and the failure mode of a
+stale list is the silent drop being removed here. An unrecognised type still
+produces content, carrying the raw type string so the gap is visible in
+transcripts. Anything genuinely unrenderable is logged at WARN rather than
+discarded quietly.
+
+`Attachment.Latitude`/`Longitude` use `StringOrNumber` because Zalo quotes
+numerics inconsistently — the same field arrives as `"10.77"` on one payload
+shape and `10.77` on another, and a plain `float64` makes the whole content
+object fail to unmarshal on the quoted variant.
+
+### Inbound buffer overflow
+
+`emit` keeps the NEWEST message when the 64-slot listener buffer is full, evicting
+the oldest — the right trade for a chat bot, since blocking the WebSocket reader
+is worse. Evictions are counted (`protocol.DroppedMessageCount()`) and logged with
+rate limiting. A burst of short fragments is the normal Vietnamese typing pattern,
+so this path is reachable in ordinary use; a rising count means the consumer is
+not keeping up and customer messages are being lost.
 
 ---
 

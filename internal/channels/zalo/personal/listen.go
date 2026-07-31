@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/zalo/personal/protocol"
 )
 
@@ -97,7 +98,32 @@ func (c *Channel) restartWithBackoff(ctx context.Context) bool {
 		}
 		return true
 	}
-	slog.Error("zalo_personal channel gave up after max restart attempts", "channel", c.Name())
+	// Give-up path. Until this call existed, exhausting the restarts left the
+	// channel to fall through to `defer c.SetRunning(false)`, which records a
+	// benign **Stopped** state with FailureKind = Unknown. That is how an
+	// EXPIRED SESSION died silently: no failure classification, therefore no
+	// re-auth remediation from health.go, therefore no alert and no operator
+	// notification. The channel simply stopped answering and stayed that way
+	// until someone happened to restart the process.
+	//
+	// Mark it as a retryable AUTH failure instead. health.go turns a
+	// ChannelFailureKindAuth on a zalo_personal channel into the
+	// "Reconnect the channel session" remediation, which is what actually
+	// surfaces the QR re-scan the operator needs.
+	//
+	// Auth is the right classification even though a network partition can
+	// reach here too: with preloaded DB credentials `restart` re-runs
+	// `authenticate`, which for dead cookies fails instantly every attempt —
+	// so a full backoff burn is overwhelmingly a credential problem, and
+	// pointing a human at re-auth is the useful answer either way.
+	slog.Error("zalo_personal channel gave up after max restart attempts — marking auth failure so the session can be reconnected",
+		"channel", c.Name(), "attempts", maxChannelRestarts)
+	c.MarkFailed(
+		"Zalo session expired",
+		fmt.Sprintf("Re-authentication failed %d times. The saved Zalo session is no longer valid — reconnect by scanning the QR code again.", maxChannelRestarts),
+		channels.ChannelFailureKindAuth,
+		true,
+	)
 	return false
 }
 

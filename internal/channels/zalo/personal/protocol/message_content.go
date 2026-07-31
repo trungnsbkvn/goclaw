@@ -41,6 +41,12 @@ func (c Content) Text() string {
 }
 
 // Attachment holds parsed fields from a non-text content object.
+//
+// Latitude/Longitude are present on location shares. They are typed as
+// StringOrNumber because Zalo is inconsistent about quoting numerics — the same
+// field arrives as `"10.77"` on one payload shape and `10.77` on another, and a
+// plain float64 makes the whole content object fail to unmarshal on the quoted
+// variant (which is how location messages used to vanish entirely).
 type Attachment struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -50,6 +56,35 @@ type Attachment struct {
 	OriURL      string `json:"oriUrl"`
 	NormalURL   string `json:"normalUrl"`
 	Type        string `json:"type"`
+
+	Latitude  StringOrNumber `json:"latitude"`
+	Longitude StringOrNumber `json:"longitude"`
+}
+
+// StringOrNumber accepts a JSON value that may be quoted or bare.
+type StringOrNumber string
+
+func (s *StringOrNumber) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "null" || trimmed == "" {
+		*s = ""
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*s = StringOrNumber(str)
+		return nil
+	}
+	// Bare numeric (or anything else) — keep the literal token.
+	*s = StringOrNumber(strings.Trim(trimmed, `"`))
+	return nil
+}
+
+func (s StringOrNumber) String() string { return string(s) }
+
+// HasLocation reports a usable coordinate pair.
+func (a *Attachment) HasLocation() bool {
+	return a != nil && a.Latitude != "" && a.Longitude != ""
 }
 
 // ParseAttachment extracts attachment metadata from non-text content.
