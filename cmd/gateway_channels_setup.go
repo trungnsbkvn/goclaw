@@ -161,6 +161,7 @@ func wireChannelRPCMethods(server *gateway.Server, pgStores *store.Stores, chann
 		chInstancesM.Register(server.Router())
 		zalomethods.NewQRMethods(pgStores.ChannelInstances, msgBus).Register(server.Router())
 		zalomethods.NewContactsMethods(pgStores.ChannelInstances).Register(server.Router())
+		zalomethods.NewGroupMethods(channelMgr).Register(server.Router())
 		whatsapp.NewQRMethods(pgStores.ChannelInstances, channelMgr, instanceLoader).Register(server.Router())
 	}
 

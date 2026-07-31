@@ -209,6 +209,20 @@ const (
 	MethodZaloPersonalQRStart  = "zalo.personal.qr.start"
 	MethodZaloPersonalContacts = "zalo.personal.contacts"
 
+	// Zalo Personal group administration. These are WRITES on a
+	// reverse-engineered transport — see internal/channels/zalo/personal/
+	// protocol/group_admin.go for which parts are confirmed vs reconstructed.
+	MethodZaloGroupCreate        = "zalo.group.create"
+	MethodZaloGroupAddMembers    = "zalo.group.addMembers"
+	MethodZaloGroupRemoveMembers = "zalo.group.removeMembers"
+	MethodZaloGroupInviteLink    = "zalo.group.inviteLink"
+
+	// MethodZaloServicesList reports the service endpoints the connected
+	// account was offered at login. Diagnostic: the available service set is
+	// account- and release-dependent on this protocol, so this is how a
+	// capability question gets answered without shipping a guess.
+	MethodZaloServicesList = "zalo.services.list"
+
 	// WhatsApp
 	MethodWhatsAppQRStart = "whatsapp.qr.start"
 )

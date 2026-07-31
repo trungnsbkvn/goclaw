@@ -367,6 +367,15 @@ func isWriteMethod(method string) bool {
 		protocol.MethodZaloPersonalQRStart,
 		protocol.MethodWhatsAppQRStart,
 
+		// Zalo group administration — creates user-visible artifacts on a
+		// reverse-engineered transport, and abusive use is what gets the
+		// underlying account banned. Operator or above, same tier as the other
+		// side-effecting channel actions above.
+		protocol.MethodZaloGroupCreate,
+		protocol.MethodZaloGroupAddMembers,
+		protocol.MethodZaloGroupRemoveMembers,
+		protocol.MethodZaloGroupInviteLink,
+
 		// Workstations — connection test invokes SSH side-effects.
 		protocol.MethodWorkstationsTest,
 	}
@@ -471,6 +480,10 @@ func isReadMethod(method string) bool {
 
 		// Zalo personal contacts listing
 		protocol.MethodZaloPersonalContacts,
+
+		// Zalo service catalog — reports which endpoints the connected account
+		// was offered at login. Pure diagnostic read, no side effects.
+		protocol.MethodZaloServicesList,
 
 		// Workstations read
 		protocol.MethodWorkstationsList,

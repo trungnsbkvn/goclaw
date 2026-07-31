@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -145,24 +146,37 @@ func SendTypingEvent(ctx context.Context, sess *Session, threadID string, thread
 }
 
 // getServiceURL extracts a service base URL from LoginInfo.
+//
+// The switch had no default, so ANY service not in the five named cases
+// returned "" — indistinguishable from "the server did not advertise it". The
+// caller then failed several frames later with an unexplained empty-URL error.
+// Now an unnamed service resolves through the raw advertised map, and a genuine
+// miss logs what the server DID offer, which is the only way to tell "GoClaw
+// doesn't know this name" apart from "this account doesn't have that service".
 func getServiceURL(sess *Session, service string) string {
 	if sess.LoginInfo == nil {
 		return ""
 	}
+	svcMap := sess.LoginInfo.ZpwServiceMapV3
 	var urls []string
 	switch service {
 	case "chat":
-		urls = sess.LoginInfo.ZpwServiceMapV3.Chat
+		urls = svcMap.Chat
 	case "group":
-		urls = sess.LoginInfo.ZpwServiceMapV3.Group
+		urls = svcMap.Group
 	case "file":
-		urls = sess.LoginInfo.ZpwServiceMapV3.File
+		urls = svcMap.File
 	case "profile":
-		urls = sess.LoginInfo.ZpwServiceMapV3.Profile
+		urls = svcMap.Profile
 	case "group_poll":
-		urls = sess.LoginInfo.ZpwServiceMapV3.GroupPoll
+		urls = svcMap.GroupPoll
 	}
 	if len(urls) == 0 {
+		urls = svcMap.Raw[service]
+	}
+	if len(urls) == 0 {
+		slog.Warn("zalo_personal: no endpoint for service",
+			"service", service, "advertised", svcMap.ServiceNames())
 		return ""
 	}
 	return urls[0]

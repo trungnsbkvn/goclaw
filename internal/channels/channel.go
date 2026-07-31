@@ -757,6 +757,45 @@ type GroupTitleProvider interface {
 	ResolveGroupTitle(ctx context.Context, chatID string) (string, error)
 }
 
+// GroupCreateResult reports a created group and, crucially, WHO DID NOT MAKE IT.
+//
+// Member addition is partial by nature on platforms that let a user restrict
+// who may add them to groups: the group is created, some invitees are refused,
+// and the call still succeeds. Callers must treat ErrorMembers as a real
+// outcome — a group created without the person it was created for is worse than
+// no group, because it looks like it worked.
+type GroupCreateResult struct {
+	GroupID      string   `json:"group_id"`
+	Link         string   `json:"link,omitempty"`
+	ErrorMembers []string `json:"error_members,omitempty"`
+}
+
+// GroupAdminProvider is optionally implemented by channels that can create
+// groups and change their membership.
+//
+// Distinct from GroupListProvider on purpose: listing is a read that every
+// connected channel can do cheaply, whereas these are WRITES that create
+// user-visible artifacts and, on reverse-engineered transports, carry account
+// risk. Keeping them behind their own interface means a channel gains group
+// listing without silently gaining the ability to create groups.
+type GroupAdminProvider interface {
+	CreateGroup(ctx context.Context, name string, memberIDs []string, withLink bool) (*GroupCreateResult, error)
+	AddGroupMembers(ctx context.Context, groupID string, memberIDs []string) (failed []string, err error)
+	RemoveGroupMembers(ctx context.Context, groupID string, memberIDs []string) (failed []string, err error)
+	GroupInviteLink(ctx context.Context, groupID string) (string, error)
+}
+
+// ServiceCatalogProvider is optionally implemented by channels whose backend
+// advertises a server-driven set of service endpoints.
+//
+// Exists for diagnosis, not for traffic: on an undocumented protocol the set of
+// available services is discovered at login and varies by account, so the only
+// honest way to answer "can this account do X?" is to ask a live session what
+// it was offered rather than to guess and read the failure.
+type ServiceCatalogProvider interface {
+	ServiceNames(ctx context.Context) ([]string, error)
+}
+
 // MetadataRefreshFailure records one group whose presentation metadata could
 // not be refreshed.
 type MetadataRefreshFailure struct {

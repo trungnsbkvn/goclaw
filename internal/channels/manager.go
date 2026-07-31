@@ -370,6 +370,75 @@ func (m *Manager) ListGroups(ctx context.Context, channelName string) ([]GroupIn
 	return glp.ListGroups(ctx)
 }
 
+// groupAdmin resolves a channel to its GroupAdminProvider, or explains which
+// half is missing — a channel that is not running and a channel that cannot
+// administer groups are different problems with different fixes.
+func (m *Manager) groupAdmin(channelName string) (GroupAdminProvider, error) {
+	m.mu.RLock()
+	ch, ok := m.channels[channelName]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("channel %q not found", channelName)
+	}
+	gap, ok := ch.(GroupAdminProvider)
+	if !ok {
+		return nil, fmt.Errorf("channel %q does not support group administration", channelName)
+	}
+	return gap, nil
+}
+
+// CreateGroup delegates to the channel's GroupAdminProvider if available.
+func (m *Manager) CreateGroup(ctx context.Context, channelName, name string, memberIDs []string, withLink bool) (*GroupCreateResult, error) {
+	gap, err := m.groupAdmin(channelName)
+	if err != nil {
+		return nil, err
+	}
+	return gap.CreateGroup(ctx, name, memberIDs, withLink)
+}
+
+// AddGroupMembers delegates to the channel's GroupAdminProvider if available.
+// The returned slice lists members the platform refused; it is not an error.
+func (m *Manager) AddGroupMembers(ctx context.Context, channelName, groupID string, memberIDs []string) ([]string, error) {
+	gap, err := m.groupAdmin(channelName)
+	if err != nil {
+		return nil, err
+	}
+	return gap.AddGroupMembers(ctx, groupID, memberIDs)
+}
+
+// RemoveGroupMembers delegates to the channel's GroupAdminProvider if available.
+func (m *Manager) RemoveGroupMembers(ctx context.Context, channelName, groupID string, memberIDs []string) ([]string, error) {
+	gap, err := m.groupAdmin(channelName)
+	if err != nil {
+		return nil, err
+	}
+	return gap.RemoveGroupMembers(ctx, groupID, memberIDs)
+}
+
+// GroupInviteLink delegates to the channel's GroupAdminProvider if available.
+func (m *Manager) GroupInviteLink(ctx context.Context, channelName, groupID string) (string, error) {
+	gap, err := m.groupAdmin(channelName)
+	if err != nil {
+		return "", err
+	}
+	return gap.GroupInviteLink(ctx, groupID)
+}
+
+// ServiceNames delegates to the channel's ServiceCatalogProvider if available.
+func (m *Manager) ServiceNames(ctx context.Context, channelName string) ([]string, error) {
+	m.mu.RLock()
+	ch, ok := m.channels[channelName]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("channel %q not found", channelName)
+	}
+	scp, ok := ch.(ServiceCatalogProvider)
+	if !ok {
+		return nil, fmt.Errorf("channel %q does not advertise a service catalog", channelName)
+	}
+	return scp.ServiceNames(ctx)
+}
+
 // ResolveGroupTitle delegates to the channel's GroupTitleProvider if available.
 func (m *Manager) ResolveGroupTitle(ctx context.Context, channelName, chatID string) (string, error) {
 	m.mu.RLock()

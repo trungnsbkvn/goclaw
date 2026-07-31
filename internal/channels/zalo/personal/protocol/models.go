@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/base64"
 	"encoding/json"
+	"sort"
 )
 
 // SecretKey is a base64-encoded secret key from Zalo login.
@@ -25,13 +26,74 @@ type LoginInfo struct {
 }
 
 // ZpwServiceMapV3 holds Zalo service endpoint URLs.
+//
+// The named fields are the services GoClaw calls today. Raw keeps EVERYTHING
+// the server advertised, including keys this struct does not name.
+//
+// Why Raw matters: this map is server-driven and undocumented, and the set of
+// keys is not stable across Zalo web releases. Before Raw existed the five
+// named fields were the only thing retained, so the answer to "does this
+// account's session expose a `friend` service?" was unknowable without editing
+// the struct, rebuilding, and re-logging-in — which is exactly the wrong loop
+// for a reverse-engineered protocol. getServiceURL now falls back to Raw, so a
+// service Zalo advertises is reachable whether or not it has a field here.
 type ZpwServiceMapV3 struct {
 	Chat      []string `json:"chat"`
 	Group     []string `json:"group"`
 	File      []string `json:"file"`
 	Profile   []string `json:"profile"`
 	GroupPoll []string `json:"group_poll"`
-	// Only fields needed for GoClaw; Zalo returns many more.
+
+	// Raw is every advertised key → endpoints, populated by UnmarshalJSON.
+	// Not a JSON field of its own (`-`): it is a second view of the same object.
+	Raw map[string][]string `json:"-"`
+}
+
+// UnmarshalJSON parses the named fields, then keeps a raw copy of every key.
+//
+// Deliberately lenient: a malformed or unexpectedly-shaped entry is skipped
+// rather than failed. This runs inside the login path, and an unfamiliar value
+// in a service GoClaw never calls must not be able to break authentication.
+func (m *ZpwServiceMapV3) UnmarshalJSON(data []byte) error {
+	// alias drops the method set, so this does not recurse.
+	type alias ZpwServiceMapV3
+	var named alias
+	if err := json.Unmarshal(data, &named); err != nil {
+		return err
+	}
+	*m = ZpwServiceMapV3(named)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// The named fields already parsed; an odd envelope must not fail login.
+		return nil
+	}
+	m.Raw = make(map[string][]string, len(raw))
+	for key, val := range raw {
+		var list []string
+		if err := json.Unmarshal(val, &list); err == nil {
+			m.Raw[key] = list
+			continue
+		}
+		// Some keys are a bare string rather than an array.
+		var one string
+		if err := json.Unmarshal(val, &one); err == nil && one != "" {
+			m.Raw[key] = []string{one}
+		}
+	}
+	return nil
+}
+
+// ServiceNames returns every service key the server advertised, sorted.
+// Used by the diagnostic gateway method and by getServiceURL's warning, so an
+// unreachable service reports what WAS on offer instead of just "not found".
+func (m ZpwServiceMapV3) ServiceNames() []string {
+	names := make([]string, 0, len(m.Raw))
+	for key := range m.Raw {
+		names = append(names, key)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ServerInfo from getServerInfo response.
