@@ -31,7 +31,68 @@ import (
 var (
 	_ channels.GroupAdminProvider     = (*Channel)(nil)
 	_ channels.ServiceCatalogProvider = (*Channel)(nil)
+	_ channels.FriendProvider         = (*Channel)(nil)
 )
+
+// FindByPhone implements channels.FriendProvider — resolves a phone number to
+// a Zalo account.
+//
+// Returns protocol.ErrUserNotFound when the number is not on Zalo or the
+// account has turned off discovery-by-phone. Callers must keep that distinct
+// from a transport failure: conflating them reports a real customer as having
+// no Zalo account.
+func (c *Channel) FindByPhone(ctx context.Context, phone string) (*channels.ContactHandle, error) {
+	sess := c.session()
+	if sess == nil {
+		return nil, fmt.Errorf("zalo_personal: not connected")
+	}
+	user, err := protocol.FindUserByPhone(ctx, sess, phone)
+	if err != nil {
+		return nil, err
+	}
+	name := user.DisplayName
+	if name == "" {
+		name = user.ZaloName
+	}
+	return &channels.ContactHandle{UserID: user.UserID, DisplayName: name, Avatar: user.Avatar}, nil
+}
+
+// SendRequest implements channels.FriendProvider — sends a friend request.
+//
+// The highest-ban-risk call on this transport. GoClaw imposes no rate limit of
+// its own: the caller owns that policy, because only the caller knows whether
+// this is one request to a customer who asked to be contacted or a loop.
+func (c *Channel) SendRequest(ctx context.Context, userID, message string) error {
+	sess := c.session()
+	if sess == nil {
+		return fmt.Errorf("zalo_personal: not connected")
+	}
+	return protocol.SendFriendRequest(ctx, sess, userID, message)
+}
+
+// ListFriends implements channels.FriendProvider.
+//
+// This is how a caller learns a friend request was ACCEPTED: the Zalo listener
+// delivers no friend-accepted event, so the uid appearing here is the signal.
+func (c *Channel) ListFriends(ctx context.Context) ([]channels.ContactHandle, error) {
+	sess := c.session()
+	if sess == nil {
+		return nil, fmt.Errorf("zalo_personal: not connected")
+	}
+	friends, err := protocol.FetchFriends(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]channels.ContactHandle, len(friends))
+	for i, f := range friends {
+		name := f.DisplayName
+		if name == "" {
+			name = f.ZaloName
+		}
+		out[i] = channels.ContactHandle{UserID: f.UserID, DisplayName: name, Avatar: f.Avatar}
+	}
+	return out, nil
+}
 
 // CreateGroup implements channels.GroupAdminProvider.
 func (c *Channel) CreateGroup(ctx context.Context, name string, memberIDs []string, withLink bool) (*channels.GroupCreateResult, error) {

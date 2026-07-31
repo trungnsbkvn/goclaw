@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
@@ -37,6 +38,94 @@ func (m *GroupMethods) Register(router *gateway.MethodRouter) {
 	router.Register(goclawprotocol.MethodZaloGroupRemoveMembers, m.handleRemoveMembers)
 	router.Register(goclawprotocol.MethodZaloGroupInviteLink, m.handleInviteLink)
 	router.Register(goclawprotocol.MethodZaloServicesList, m.handleServicesList)
+	router.Register(goclawprotocol.MethodZaloFriendFind, m.handleFriendFind)
+	router.Register(goclawprotocol.MethodZaloFriendRequest, m.handleFriendRequest)
+	router.Register(goclawprotocol.MethodZaloFriendList, m.handleFriendList)
+}
+
+// friendParams is the request shape for the contact methods.
+type friendParams struct {
+	Channel string `json:"channel"`
+	Phone   string `json:"phone"`
+	UserID  string `json:"user_id"`
+	Message string `json:"message"`
+}
+
+func (p *friendParams) channelName() string {
+	if p.Channel != "" {
+		return p.Channel
+	}
+	return channels.TypeZaloPersonal
+}
+
+func parseFriendParams(req *goclawprotocol.RequestFrame) friendParams {
+	var p friendParams
+	if req.Params != nil {
+		_ = json.Unmarshal(req.Params, &p)
+	}
+	return p
+}
+
+// handleFriendFind resolves a phone number to a Zalo account.
+//
+// "not found" is returned as a SUCCESS with found=false rather than an error:
+// a number that is not on Zalo is an ordinary outcome, and an error response
+// would make callers unable to tell it apart from an outage.
+func (m *GroupMethods) handleFriendFind(ctx context.Context, client *gateway.Client, req *goclawprotocol.RequestFrame) {
+	p := parseFriendParams(req)
+	if p.Phone == "" {
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInvalidRequest, "phone is required"))
+		return
+	}
+
+	handle, err := m.channelMgr.FindByPhone(ctx, p.channelName(), p.Phone)
+	if err != nil {
+		if strings.Contains(err.Error(), "no Zalo account") {
+			client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{"found": false}))
+			return
+		}
+		slog.Warn("zalo friend find failed", "channel", p.channelName(), "error", err)
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInternal, err.Error()))
+		return
+	}
+	client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{
+		"found": true, "user_id": handle.UserID, "display_name": handle.DisplayName,
+	}))
+}
+
+// handleFriendRequest sends a friend request.
+//
+// GoClaw applies no rate limit here on purpose: it cannot tell one request to a
+// customer who asked to be contacted from a loop. That policy belongs to the
+// caller, which knows the conversation. The log line exists so the calls are at
+// least reconstructable after the fact.
+func (m *GroupMethods) handleFriendRequest(ctx context.Context, client *gateway.Client, req *goclawprotocol.RequestFrame) {
+	p := parseFriendParams(req)
+	if p.UserID == "" {
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInvalidRequest, "user_id is required"))
+		return
+	}
+
+	slog.Info("zalo friend request", "channel", p.channelName(), "user", p.UserID)
+	if err := m.channelMgr.SendFriendRequest(ctx, p.channelName(), p.UserID, p.Message); err != nil {
+		slog.Warn("zalo friend request failed", "channel", p.channelName(), "user", p.UserID, "error", err)
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInternal, err.Error()))
+		return
+	}
+	client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
+}
+
+// handleFriendList lists the account's friends — the way to detect that a
+// friend request was accepted, since no accepted-event is delivered.
+func (m *GroupMethods) handleFriendList(ctx context.Context, client *gateway.Client, req *goclawprotocol.RequestFrame) {
+	p := parseFriendParams(req)
+
+	friends, err := m.channelMgr.ListFriends(ctx, p.channelName())
+	if err != nil {
+		client.SendResponse(goclawprotocol.NewErrorResponse(req.ID, goclawprotocol.ErrInternal, err.Error()))
+		return
+	}
+	client.SendResponse(goclawprotocol.NewOKResponse(req.ID, map[string]any{"friends": friends}))
 }
 
 // groupParams is the shared request shape. channel defaults to the standard

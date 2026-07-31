@@ -376,6 +376,10 @@ func isWriteMethod(method string) bool {
 		protocol.MethodZaloGroupRemoveMembers,
 		protocol.MethodZaloGroupInviteLink,
 
+		// Friend request — highest ban risk on this transport, and an
+		// unsolicited one is visible to a stranger under the firm's name.
+		protocol.MethodZaloFriendRequest,
+
 		// Workstations — connection test invokes SSH side-effects.
 		protocol.MethodWorkstationsTest,
 	}
@@ -484,6 +488,12 @@ func isReadMethod(method string) bool {
 		// Zalo service catalog — reports which endpoints the connected account
 		// was offered at login. Pure diagnostic read, no side effects.
 		protocol.MethodZaloServicesList,
+
+		// Friend lookup + friend list. Reads: no message is sent and nothing
+		// is created. Kept out of the write tier so the phone→identity lookup
+		// that precedes a friend request can be audited on its own.
+		protocol.MethodZaloFriendFind,
+		protocol.MethodZaloFriendList,
 
 		// Workstations read
 		protocol.MethodWorkstationsList,

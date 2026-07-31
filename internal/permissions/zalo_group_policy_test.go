@@ -40,6 +40,27 @@ func TestZaloServicesListIsReadOnly(t *testing.T) {
 	}
 }
 
+// The friend surface splits by side effect, not by subject: looking a number up
+// reads, sending a request writes into a stranger's app under the operator's
+// name. Classifying the request as a read would let a viewer trigger the
+// highest-ban-risk call on the transport.
+func TestZaloFriendMethodsSplitReadFromWrite(t *testing.T) {
+	reads := []string{protocol.MethodZaloFriendFind, protocol.MethodZaloFriendList}
+	for _, method := range reads {
+		if got := MethodRole(method); got != RoleViewer {
+			t.Errorf("MethodRole(%s) = %v, want %v (read)", method, got, RoleViewer)
+		}
+	}
+
+	if got := MethodRole(protocol.MethodZaloFriendRequest); got != RoleOperator {
+		t.Errorf("MethodRole(%s) = %v, want %v (write)",
+			protocol.MethodZaloFriendRequest, got, RoleOperator)
+	}
+	if HasMinRole(RoleViewer, MethodRole(protocol.MethodZaloFriendRequest)) {
+		t.Error("a viewer must not be able to send friend requests")
+	}
+}
+
 // Guards the fail-closed default itself: if this ever starts returning
 // something other than RoleNone, every unclassified method silently opens up.
 func TestUnclassifiedMethodDenied(t *testing.T) {

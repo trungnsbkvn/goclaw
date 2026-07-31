@@ -785,6 +785,31 @@ type GroupAdminProvider interface {
 	GroupInviteLink(ctx context.Context, groupID string) (string, error)
 }
 
+// ContactHandle is one contact on a chat channel.
+type ContactHandle struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Avatar      string `json:"avatar,omitempty"`
+}
+
+// FriendProvider is optionally implemented by channels that can resolve a phone
+// number to an account and issue contact requests.
+//
+// Split from every other capability because the risk profile is different in
+// kind: FindByPhone turns a phone number into an identity, and SendRequest
+// puts an unsolicited notification in a stranger's app under the operator's
+// name. Both belong behind their own interface so a channel cannot acquire
+// them incidentally.
+//
+// ListFriends exists to detect ACCEPTANCE. This transport delivers no
+// friend-accepted event, so the supported way to learn that a request was
+// accepted is to look for the uid appearing in the friend list.
+type FriendProvider interface {
+	FindByPhone(ctx context.Context, phone string) (*ContactHandle, error)
+	SendRequest(ctx context.Context, userID, message string) error
+	ListFriends(ctx context.Context) ([]ContactHandle, error)
+}
+
 // ServiceCatalogProvider is optionally implemented by channels whose backend
 // advertises a server-driven set of service endpoints.
 //

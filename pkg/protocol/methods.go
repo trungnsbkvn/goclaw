@@ -223,6 +223,19 @@ const (
 	// capability question gets answered without shipping a guess.
 	MethodZaloServicesList = "zalo.services.list"
 
+	// MethodZaloFriendFind resolves a phone number to a Zalo profile. A read,
+	// but a privacy-sensitive one — it turns a phone number into an identity.
+	MethodZaloFriendFind = "zalo.friend.find"
+	// MethodZaloFriendRequest sends a friend request. The highest-ban-risk
+	// call in the Zalo surface: unsolicited requests to strangers are a
+	// primary automated-abuse signal, and the account at stake is the
+	// operator's own.
+	MethodZaloFriendRequest = "zalo.friend.request"
+	// MethodZaloFriendList lists the account's friends. Used to detect that a
+	// friend request was ACCEPTED — the Zalo listener does not deliver a
+	// friend-accepted event, so polling this is the supported way to find out.
+	MethodZaloFriendList = "zalo.friend.list"
+
 	// WhatsApp
 	MethodWhatsAppQRStart = "whatsapp.qr.start"
 )

@@ -424,6 +424,48 @@ func (m *Manager) GroupInviteLink(ctx context.Context, channelName, groupID stri
 	return gap.GroupInviteLink(ctx, groupID)
 }
 
+// friendProvider resolves a channel to its FriendProvider.
+func (m *Manager) friendProvider(channelName string) (FriendProvider, error) {
+	m.mu.RLock()
+	ch, ok := m.channels[channelName]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("channel %q not found", channelName)
+	}
+	fp, ok := ch.(FriendProvider)
+	if !ok {
+		return nil, fmt.Errorf("channel %q does not support contact lookup", channelName)
+	}
+	return fp, nil
+}
+
+// FindByPhone delegates to the channel's FriendProvider if available.
+func (m *Manager) FindByPhone(ctx context.Context, channelName, phone string) (*ContactHandle, error) {
+	fp, err := m.friendProvider(channelName)
+	if err != nil {
+		return nil, err
+	}
+	return fp.FindByPhone(ctx, phone)
+}
+
+// SendFriendRequest delegates to the channel's FriendProvider if available.
+func (m *Manager) SendFriendRequest(ctx context.Context, channelName, userID, message string) error {
+	fp, err := m.friendProvider(channelName)
+	if err != nil {
+		return err
+	}
+	return fp.SendRequest(ctx, userID, message)
+}
+
+// ListFriends delegates to the channel's FriendProvider if available.
+func (m *Manager) ListFriends(ctx context.Context, channelName string) ([]ContactHandle, error) {
+	fp, err := m.friendProvider(channelName)
+	if err != nil {
+		return nil, err
+	}
+	return fp.ListFriends(ctx)
+}
+
 // ServiceNames delegates to the channel's ServiceCatalogProvider if available.
 func (m *Manager) ServiceNames(ctx context.Context, channelName string) ([]string, error) {
 	m.mu.RLock()
