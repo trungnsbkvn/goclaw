@@ -28,6 +28,11 @@ type zaloInstanceConfig struct {
 	AllowFrom      []string                   `json:"allow_from,omitempty"`
 	BlockReply     *bool                      `json:"block_reply,omitempty"`
 	ChatBehavior   *config.ChatBehaviorConfig `json:"chat_behavior,omitempty"`
+	// PairingNotice must be listed here or the opt-in does not exist for a
+	// DB-backed instance: this struct is the ONLY thing read out of the
+	// instance's JSON config, so a field missing here is silently dropped
+	// rather than rejected. Every production instance is DB-backed.
+	PairingNotice *bool `json:"pairing_notice,omitempty"`
 }
 
 // Factory creates a Zalo Personal channel from DB instance data.
@@ -115,6 +120,7 @@ func FactoryWithPendingStore(pendingStore store.PendingMessageStore) channels.Ch
 			HistoryLimit:   ic.HistoryLimit,
 			BlockReply:     ic.BlockReply,
 			ChatBehavior:   ic.ChatBehavior,
+			PairingNotice:  ic.PairingNotice,
 		}
 
 		ch, err := New(zaloCfg, msgBus, pairingSvc, pendingStore)
