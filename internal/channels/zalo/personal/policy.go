@@ -46,6 +46,20 @@ func (c *Channel) checkGroupPolicy(ctx context.Context, senderID, groupID string
 	}
 }
 
+// pairingNoticeEnabled reports whether the pairing code may be sent into the
+// chat. Unset means NO on this channel — see ZaloPersonalConfig.PairingNotice.
+func (c *Channel) pairingNoticeEnabled() bool {
+	return c.config.PairingNotice != nil && *c.config.PairingNotice
+}
+
+// sendPairingReply records the pairing request and — only when the instance
+// opts in — tells the sender about it.
+//
+// The request is ALWAYS recorded, whether or not anything is sent: that is what
+// puts the sender in pairing.list for an operator to approve. What
+// config.PairingNotice gates is purely whether the pairing code is broadcast
+// into the chat that triggered it. See ZaloPersonalConfig.PairingNotice for why
+// this channel defaults to silent.
 func (c *Channel) sendPairingReply(ctx context.Context, senderID, chatID string) {
 	ps := c.PairingService()
 	sess := c.session()
@@ -60,6 +74,17 @@ func (c *Channel) sendPairingReply(ctx context.Context, senderID, chatID string)
 	code, err := ps.RequestPairing(ctx, senderID, c.Name(), chatID, "default", nil)
 	if err != nil {
 		slog.Debug("zalo_personal pairing request failed", "sender_id", senderID, "error", err)
+		return
+	}
+
+	if !c.pairingNoticeEnabled() {
+		// Logged at Info, not Debug: this is the ONLY place an operator learns
+		// that someone is waiting, now that the sender is not told to go and
+		// fetch them. It carries everything needed to approve.
+		slog.Info("zalo_personal: unpaired sender held for operator approval "+
+			"(no notice sent — see pairing_notice)",
+			"channel", c.Name(), "sender_id", senderID, "chat_id", chatID, "code", code)
+		c.MarkPairingNotifSent(senderID)
 		return
 	}
 

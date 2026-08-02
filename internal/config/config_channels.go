@@ -218,6 +218,29 @@ type ZaloPersonalConfig struct {
 	CredentialsPath string              `json:"credentials_path,omitempty"` // path to saved cookies JSON
 	BlockReply      *bool               `json:"block_reply,omitempty"`      // override gateway block_reply (nil = inherit)
 	ChatBehavior    *ChatBehaviorConfig `json:"chat_behavior,omitempty"`    // override gateway chat behavior (nil = inherit)
+	// PairingNotice controls whether an UNPAIRED sender is told, in the chat,
+	// that they need to pair — including their sender ID, a pairing code and the
+	// CLI command to approve it.
+	//
+	// Defaults to FALSE on this channel alone, and the reason is what the
+	// channel is: a personal Zalo account is a human's contact list, not a bot
+	// endpoint. Strangers arrive by design — a customer accepts a contact
+	// request from the firm and writes — and on 2026-08-02 one of them received
+	//
+	//	GoClaw: access not configured.
+	//	Your Zalo ID: 7362481190098513798
+	//	Pairing code: Z52Z5YKE
+	//	Ask the bot owner to approve with: goclaw pairing approve Z52Z5YKE
+	//
+	// as the firm's first words to them. On Telegram/Discord/Slack a bot DM IS
+	// an operator surface and the text is addressed to the right reader; here it
+	// never is. The pairing request is still RECORDED either way, so the
+	// operator approves it from pairing.list — the code just stops being
+	// broadcast to whoever triggered it.
+	//
+	// Set true to restore the old behaviour on a private account used only by
+	// staff.
+	PairingNotice *bool `json:"pairing_notice,omitempty"`
 }
 
 type FeishuConfig struct {
