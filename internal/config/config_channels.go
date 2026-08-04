@@ -241,6 +241,15 @@ type ZaloPersonalConfig struct {
 	// Set true to restore the old behaviour on a private account used only by
 	// staff.
 	PairingNotice *bool `json:"pairing_notice,omitempty"`
+	// AgentOverrides routes individual threads on this account to a different
+	// agent than the instance default: key "user:<senderID>" for DMs,
+	// "group:<chatID>" for groups; value is the target agent key. This is what
+	// lets ONE Zalo account serve several personas (customer DMs → sales agent,
+	// staff DMs / internal groups → internal assistant). A key that is absent —
+	// or a value naming an agent that doesn't exist — falls back to the
+	// instance default agent; strangers can therefore never reach an override
+	// target, because they are never listed.
+	AgentOverrides map[string]string `json:"agent_overrides,omitempty"`
 }
 
 type FeishuConfig struct {

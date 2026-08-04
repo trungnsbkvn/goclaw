@@ -22,6 +22,32 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 )
 
+// getAgentLoopWithFallback resolves agentID, and when that fails AND the
+// message carries channels.MetaAgentIDFallback (set by a per-thread agent
+// override at the channel funnel), retries with the instance-default agent
+// recorded there. A misconfigured override must degrade the thread to the
+// default agent — loudly, via the warn log — never to the error-reply path:
+// on an external customer channel that path is silence. Returns the loop, the
+// agent ID actually serving the turn (session keys must be built from it),
+// and the original error when neither resolves.
+func getAgentLoopWithFallback(ctx context.Context, deps *ConsumerDeps, msg bus.InboundMessage, agentID string) (agent.Agent, string, error) {
+	agentLoop, err := deps.Agents.Get(ctx, agentID)
+	if err == nil {
+		return agentLoop, agentID, nil
+	}
+	fb := msg.Metadata[channels.MetaAgentIDFallback]
+	if fb == "" || fb == agentID {
+		return nil, agentID, err
+	}
+	slog.Warn("inbound: override agent unavailable, falling back to instance default",
+		"agent", agentID, "fallback", fb, "channel", msg.Channel, "chat", msg.ChatID, "error", err)
+	fbLoop, fbErr := deps.Agents.Get(ctx, fb)
+	if fbErr != nil {
+		return nil, agentID, err
+	}
+	return fbLoop, fb, nil
+}
+
 // processNormalMessage handles routing, scheduling, and response delivery for a single
 // (possibly merged) inbound message. Called directly by the debouncer's flush callback.
 func processNormalMessage(
@@ -43,7 +69,7 @@ func processNormalMessage(
 		agentID = resolveAgentRouteForInbound(ctx, deps.Cfg, deps.AgentStore, msg.Channel, msg.ChatID, msg.PeerKind)
 	}
 
-	agentLoop, err := deps.Agents.Get(ctx, agentID)
+	agentLoop, agentID, err := getAgentLoopWithFallback(ctx, deps, msg, agentID)
 	if err != nil {
 		slog.Warn("inbound: agent not found", "agent", agentID, "channel", msg.Channel, "error", err)
 		errContent := formatAgentError(err)

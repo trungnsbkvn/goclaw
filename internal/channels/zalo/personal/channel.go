@@ -79,6 +79,7 @@ func New(cfg config.ZaloPersonalConfig, msgBus *bus.MessageBus, pairingSvc store
 	ch.SetGroupHistory(channels.MakeHistory(channels.TypeZaloPersonal, pendingStore, base.TenantID()))
 	ch.SetHistoryLimit(historyLimit)
 	ch.SetRequireMention(requireMention)
+	ch.SetAgentOverrides(cfg.AgentOverrides)
 	return ch, nil
 }
 

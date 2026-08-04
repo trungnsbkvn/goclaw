@@ -223,6 +223,7 @@ type BaseChannel struct {
 	health           ChannelHealth
 	allowList        []string
 	agentID          string                  // for DB instances: routes to specific agent (empty = use resolveAgentRoute)
+	agentOverrides   map[string]string       // per-thread agent routing: "user:<id>"/"group:<id>" → agent key (see SetAgentOverrides)
 	tenantID         uuid.UUID               // for DB instances: tenant scope (zero = master tenant fallback)
 	contactCollector *store.ContactCollector // optional: auto-collect contacts from channel messages
 
@@ -273,6 +274,24 @@ func (c *BaseChannel) AgentID() string { return c.agentID }
 
 // SetAgentID sets the explicit agent ID for routing (used by InstanceLoader for DB instances).
 func (c *BaseChannel) SetAgentID(id string) { c.agentID = id }
+
+// MetaAgentIDFallback carries the instance-default agent alongside an
+// overridden InboundMessage.AgentID, so the consumer can fall back to it —
+// with a warning, never silently and never with a hard failure — when the
+// override names an agent that doesn't exist or is disabled.
+const MetaAgentIDFallback = "agent_id_fallback"
+
+// SetAgentOverrides installs per-thread agent routing for this channel
+// instance: key "user:<senderID>" (DMs) or "group:<chatID>" (groups), value =
+// target agent key. Threads not listed keep the instance default agent. This
+// is what lets one account host several personas — e.g. a Zalo number whose
+// stranger DMs go to the sales agent while staff DMs and internal groups go
+// to the internal assistant. Call before Start(); the map is read-only after
+// construction (same discipline as SetAgentID).
+func (c *BaseChannel) SetAgentOverrides(overrides map[string]string) { c.agentOverrides = overrides }
+
+// AgentOverrides returns the per-thread routing map (may be nil).
+func (c *BaseChannel) AgentOverrides() map[string]string { return c.agentOverrides }
 
 // TenantID returns the tenant UUID for this channel (zero = master tenant fallback).
 func (c *BaseChannel) TenantID() uuid.UUID { return c.tenantID }
@@ -710,6 +729,25 @@ func (c *BaseChannel) handleMessageMedia(senderID, chatID, content string, media
 		userID = senderID[:idx]
 	}
 
+	// Per-thread agent override (see SetAgentOverrides). The instance default
+	// rides along in metadata so the consumer can fall back if the override
+	// target is unavailable — the thread must degrade to the default agent,
+	// never to silence or an error reply.
+	agentID := c.agentID
+	if len(c.agentOverrides) > 0 {
+		key := "user:" + userID
+		if peerKind == "group" {
+			key = "group:" + chatID
+		}
+		if target, ok := c.agentOverrides[key]; ok && target != "" && target != agentID {
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata[MetaAgentIDFallback] = agentID
+			agentID = target
+		}
+	}
+
 	msg := bus.InboundMessage{
 		Channel:  c.name,
 		SenderID: senderID,
@@ -720,7 +758,7 @@ func (c *BaseChannel) handleMessageMedia(senderID, chatID, content string, media
 		UserID:   userID,
 		Metadata: metadata,
 		TenantID: c.tenantID,
-		AgentID:  c.agentID,
+		AgentID:  agentID,
 	}
 
 	c.bus.PublishInbound(msg)
