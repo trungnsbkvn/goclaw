@@ -192,9 +192,17 @@ func (s *SQLitePendingMessageStore) ListGroups(ctx context.Context) ([]store.Pen
 	var result []store.PendingMessageGroup
 	for rows.Next() {
 		var g store.PendingMessageGroup
-		if err := rows.Scan(&g.ChannelName, &g.HistoryKey, &g.ParentHistoryKey, &g.MessageCount, &g.HasSummary, &g.LastActivity); err != nil {
+		// last_activity comes back as TEXT, not time.Time: MAX() erases the
+		// column's declared type, so the driver's TEXT→time conversion (which
+		// fires for a plain `created_at` select, as in ListByHistoryKey above)
+		// never kicks in. Scanning straight into a time.Time therefore failed
+		// on EVERY row, which meant history compaction had never once run —
+		// it logged compaction.sweep_failed every 10 minutes on every channel.
+		var lastActivity sqliteTime
+		if err := rows.Scan(&g.ChannelName, &g.HistoryKey, &g.ParentHistoryKey, &g.MessageCount, &g.HasSummary, &lastActivity); err != nil {
 			return nil, err
 		}
+		g.LastActivity = lastActivity.Time
 		result = append(result, g)
 	}
 	return result, rows.Err()
