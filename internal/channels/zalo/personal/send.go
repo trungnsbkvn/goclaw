@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
+
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/typing"
@@ -12,6 +15,47 @@ import (
 )
 
 const maxTextLength = 2000
+
+// Bubble rendering for 1:1 threads: a human does not send a four-paragraph
+// block, they send a few short messages. The paragraph seams the model already
+// wrote are the bubbles; a typing event plus a short pause between them is
+// what makes the sequence read as composing rather than pasting.
+const (
+	// bubbleMinRunes — below this the text goes out whole; three tiny bubbles
+	// reads as nervous, not human.
+	bubbleMinRunes = 200
+	// bubbleMaxCount caps the burst; the tail paragraphs merge into the last
+	// bubble rather than being dropped.
+	bubbleMaxCount = 3
+	bubblePause    = 1500 * time.Millisecond
+)
+
+// bubbleParagraphs splits one outbound text into 1–3 paragraph bubbles for a
+// DIRECT thread. Groups keep the single-message shape: a multi-party room is
+// noisy enough without the bot triple-posting.
+func bubbleParagraphs(text string, threadType protocol.ThreadType) []string {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return nil
+	}
+	if threadType != protocol.ThreadTypeUser || len([]rune(t)) < bubbleMinRunes {
+		return []string{t}
+	}
+	var paras []string
+	for _, p := range strings.Split(t, "\n\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			paras = append(paras, p)
+		}
+	}
+	if len(paras) == 0 {
+		return []string{t}
+	}
+	if len(paras) > bubbleMaxCount {
+		tail := strings.Join(paras[bubbleMaxCount-1:], "\n\n")
+		paras = append(paras[:bubbleMaxCount-1], tail)
+	}
+	return paras
+}
 
 // Send delivers an outbound message to a Zalo chat.
 func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
@@ -85,9 +129,26 @@ func (c *Channel) sendFile(ctx context.Context, sess *protocol.Session, chatID s
 }
 
 func (c *Channel) sendChunkedText(ctx context.Context, sess *protocol.Session, chatID string, threadType protocol.ThreadType, text string) error {
-	for _, chunk := range channels.ChunkMarkdown(text, maxTextLength) {
-		if _, err := protocol.SendMessage(ctx, sess, chatID, threadType, chunk); err != nil {
-			return err
+	for i, bubble := range bubbleParagraphs(text, threadType) {
+		if i > 0 {
+			// Typing between bubbles is what separates "composing the next
+			// thought" from "pasting a prepared block". Best-effort — a failed
+			// typing event must not cost the message behind it.
+			if err := protocol.SendTypingEvent(ctx, sess, chatID, threadType); err != nil {
+				slog.Debug("zalo_personal: typing between bubbles failed", "error", err)
+			}
+			select {
+			case <-time.After(bubblePause):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		// Length chunking stays inside each bubble: a paragraph longer than the
+		// platform cap still has to split, bubbles or not.
+		for _, chunk := range channels.ChunkMarkdown(bubble, maxTextLength) {
+			if _, err := protocol.SendMessage(ctx, sess, chatID, threadType, chunk); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
